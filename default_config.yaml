@@ -1,0 +1,9 @@
+human_interface:
+    name: slack
+    bot_name: SecurityBot
+    api_key: abc123
+    channel: home-security
+
+security_interface:
+    name: zoneminder
+    api_key: abc123
