@@ -95,8 +95,8 @@ if __name__ == "__main__":
     SecurityInterfaceClass = security_interfaces.get(config["security_interface"]["name"])
     HumanInterfaceClass = human_interfaces.get(config["human_interface"]["name"])
 
-    security_interface = SecurityInterfaceClass(config["security_interface"])
-    human_interface = HumanInterfaceClass(config["human_interface"], security_interface)
+    security_interface = SecurityInterfaceClass(config["security_interface"], logger)
+    human_interface = HumanInterfaceClass(config["human_interface"], security_interface, logger)
 
     # Ensure the two interfaces are ready (connect to their backend/etc)
     if not human_interface.is_ready():

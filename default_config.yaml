@@ -1,9 +1,11 @@
+# Example configuration file, anything in <> needs to be replaced
+
 human_interface:
     name: slack
-    bot_name: SecurityBot
-    api_key: abc123
-    channel: home-security
+    bot_name: <bot name>
+    bot_user_token: <oauth access token>
+    channel: <channel>
 
 security_interface:
     name: zoneminder
-    api_key: abc123
+    api_key: <key>
