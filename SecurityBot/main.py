@@ -100,11 +100,11 @@ if __name__ == "__main__":
 
     # Ensure the two interfaces are ready (connect to their backend/etc)
     if not human_interface.is_ready():
-        logger.error("{0} interface failed to ready up.".format(human_interface.name.title()))
+        logger.error("{0} interface failed to ready up".format(human_interface.name.title()))
         sys.exit(1)
 
     if not security_interface.is_ready():
-        logger.error("{0} interface failed to ready up.".format(security_interface.name.title()))
+        logger.error("{0} interface failed to ready up".format(security_interface.name.title()))
         sys.exit(1)
 
     # Listen loop

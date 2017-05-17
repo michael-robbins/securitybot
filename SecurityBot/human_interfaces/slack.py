@@ -14,29 +14,43 @@ class SlackInterface(object):
         self.logger = logger
         self.slack_client = None
         self.bot_id = config.get("bot_id", None)
+        self.channel_id = None
         self.bot_reference = None
         self.ready = False
 
         self.available_commands = self.security_interface.get_commands()
         self.available_commands_help = "Available commands are:\n"
 
-        for command, (func, help_text) in self.available_commands:
+        for command, (func, help_text) in self.available_commands.items():
             self.available_commands_help += "* {0}: {1}\n".format(command, help_text)
 
     def get_bot_id(self, bot_name):
         api_call = self.slack_client.api_call("users.list")
 
-        if api_call.get("ok"):
-            users = api_call.get('members')
-            for user in users:
+        if api_call.get("ok", False):
+            for user in api_call.get("members"):
                 if user.get("name") == bot_name:
                     return user.get("id")
-        else:
-            return None
+
+        return None
+
+    def get_channel_id(self, channel_name):
+        api_call = self.slack_client.api_call("channels.list", exclude_archived=1)
+
+        if api_call.get("ok", False):
+            for channel in api_call["channels"]:
+                if channel["name"] == channel_name:
+                    return channel["id"]
+
+        return None
 
     def is_ready(self):
+        # Ensure we're connected to the slack feed
         try:
             self.slack_client = SlackClient(self.config["bot_user_token"])
+            if not self.slack_client.rtm_connect():
+                self.logger.error("Failed to connect to the Slack API (RTM Connect Failed)")
+                return False
         except SlackConnectionError:
             self.logger.error("Failed to connect to the Slack API")
             return False
@@ -44,60 +58,71 @@ class SlackInterface(object):
             self.logger.error("Failed to log into the Slack API")
             return False
 
+        # Get our bot's ID
         if self.bot_id is None or self.bot_id == '':
-            self.bot_id = self.get_bot_id(self.config["bot_name"])
+            self.bot_id = self.get_bot_id(self.config["bot_name"].lower())
 
             if self.bot_id is None:
                 self.logger.error("Failed to obtain the ID of the bot '{0}'".format(self.config["bot_name"]))
                 return False
 
         self.bot_reference = "<@{0}>".format(self.bot_id)
+
+        # Get our channel's ID
+        self.channel_id = self.get_channel_id(self.config["channel"].lower())
+
+        if self.channel_id is None:
+            self.logger.error("Failed to obtain the ID of the channel '{0}'".format(self.config["channel"]))
+            return False
+
+        # And we're done here
         self.ready = True
 
         return True
 
     @staticmethod
-    def match_event(event, bot_reference, channel=None):
+    def match_event(event, bot_reference, channel_id=None):
         if not event:
-            return None, None
+            return False
 
         # We only want text based events
         if "text" not in event:
-            return None, None
+            return False
 
-        event_channel = event.get("channel")
+        event_channel_id = event.get("channel")
 
         # Skip this event if the channel doesn't match
-        if channel is not None:
-            if event_channel is not None and event_channel != channel:
-                return None, None
+        if channel_id is not None:
+            if event_channel_id is not None and event_channel_id != channel_id:
+                return False
 
         # Match on the bot reference being in the message
         if bot_reference in event["text"]:
-            print("Found '{0}' in '{1}'".format(bot_reference, event["text"]))
-            event_text = event["text"].split(bot_reference)[1].strip().lower()
+            return True
 
-            return event_text, event_channel
-
-        return None, None
+        return False
 
     def post_message(self, message, channel):
         self.slack_client.api_call("chat.postMessage", channel=channel, text=message, as_user=True)
 
-    def handle_message(self, message, channel):
-        message = message.split(' ')
+    def handle_event(self, event):
+        # Parse the message and drop the bot user mention
+        message = event["text"].strip().lower().split(' ')[1:]
+        channel = event["channel"]
 
         if len(message) < 2:
             self.post_message("I'm sorry but your command doesn't look valid.", channel)
-            self.post_message("I'm expecting commands to be structured like: @myself command option", channel)
+            self.post_message("I'm expecting commands to be structured like: @{0} command option".format(
+                self.config["bot_name"]), channel)
+            return False
 
         command = message[0]
         if command not in self.available_commands:
-            self.post_message("I'm sorry but I don't understand your command: '{0}'".format(command))
+            self.post_message("I'm sorry but I don't understand your command: '{0}'".format(command), channel)
             self.post_message(self.available_commands_help, channel)
+            return False
 
-        command_function = self.available_commands[command][1][0]
-
+        command_function = self.available_commands[command][0]
         self.post_message(command_function(message[1:]), channel)
 
     def listen_for_events(self):
@@ -107,11 +132,11 @@ class SlackInterface(object):
         if not self.slack_client.rtm_connect():
             raise RuntimeError("Failed to connect to the Slack API")
 
+        self.logger.info("Slack is connected and listening for mentions")
+
         while True:
             for event in self.slack_client.rtm_read():
-                event_text, channel = self.match_event(event, self.bot_reference, self.config["channel"])
-
-                if event_text and channel:
-                    self.handle_message(event_text, channel)
+                if self.match_event(event, self.bot_reference, self.channel_id):
+                    self.handle_event(event)
 
             time.sleep(SlackInterface.web_socket_sleep_delay)

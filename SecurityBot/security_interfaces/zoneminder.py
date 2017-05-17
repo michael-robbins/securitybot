@@ -5,7 +5,7 @@ class ZoneMinderInterface(object):
     def __init__(self, config, logger):
         self.config = config
         self.logger = logger
-        self.interface_status = False
+
         self.commands = {
             "arm": (self.arm_location, "Arms a location"),
             "disarm": (self.disarm_location, "Disarms a location"),
@@ -15,10 +15,12 @@ class ZoneMinderInterface(object):
         return self.commands
 
     def is_ready(self):
-        return self.interface_status
+        return True
 
     def arm_location(self, location):
-        pass
+        location = location[0]
+        return "{0} has been armed!".format(location.title())
 
     def disarm_location(self, location):
-        pass
+        location = location[0]
+        return "{0} has been disarmed!".format(location.title())
