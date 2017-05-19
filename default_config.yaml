@@ -2,10 +2,17 @@
 
 human_interface:
     name: slack
-    bot_name: <bot name>
-    bot_user_token: <oauth access token>
-    channel: <channel>
+    bot_name: <bot user name>
+    bot_user_token: <bot-token>
+    channel: <channel bot listens to>
 
 security_interface:
     name: zoneminder
     api_key: <key>
+
+users:
+    - 'slack:<slack_user_id>:<common_name>'
+
+permissions:
+    # You can provide '*' as the command or option to make it match anything the user types
+    - 'zoneminder:<common_name>:<command>:<option>'

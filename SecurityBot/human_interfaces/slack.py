@@ -8,14 +8,15 @@ import time
 class SlackInterface(object):
     name = "slack"
     web_socket_sleep_delay = 1
-    no_text_messages = [
+    no_text_messages = (
         "Err... you didn't type anything?",
         "Hi, what's up?",
         "Sorry, I didn't quite catch that",
-    ]
+    )
 
-    def __init__(self, config, security_interface, logger):
+    def __init__(self, config, users, security_interface, logger):
         self.config = config
+        self.users = dict()
         self.security_interface = security_interface
         self.logger = logger
         self.slack_client = None
@@ -24,11 +25,21 @@ class SlackInterface(object):
         self.ready = False
         self.last_ts = float(0)
 
-        self.available_commands = self.security_interface.get_commands()
-        self.available_commands_help = "Available commands are:\n```"
+        for user_mapping in users:
+            interface, interface_id, common_id = user_mapping.split(':')
 
-        for command, (func, help_text) in self.available_commands.items():
-            self.available_commands_help += "{0:<15}{1}\n".format("'{0}'".format(command), help_text)
+            if interface != self.name:
+                continue
+
+            self.users[interface_id] = common_id
+
+        self.available_commands = self.security_interface.get_commands()
+
+        self.available_commands_help = "Available commands are:\n```"
+        self.available_commands_help += "{0:<20}{1}\n".format("Command", "Help")
+
+        for command, (func, options, help_text) in self.available_commands.items():
+            self.available_commands_help += "{0:<20}{1}\n".format("'{0}'".format(command), help_text)
 
         self.available_commands_help += "```\n\n"
 
@@ -75,7 +86,7 @@ class SlackInterface(object):
                 return False
 
         self.available_commands_help += "I'm expecting the commands to look like:\n" \
-                                        "<@{0}> command option1 [option2]...".format(self.bot_id)
+                                        "<@{0}> command [option]".format(self.bot_id)
 
         # Get our channel's ID
         if not self.channel_id:
@@ -122,39 +133,47 @@ class SlackInterface(object):
 
         return False
 
-    def post_message(self, message, channel):
-        self.slack_client.api_call("chat.postMessage", channel=channel, text=message, as_user=True)
-
     def handle_event(self, event):
         # Parse the message and drop the bot user mention
         message = event["text"].strip().lower().split(' ')[1:]
         channel = event["channel"]
+        user_id = event["user"]
+        common_id = self.users.get(user_id)
 
-        command = ''
-        options = list()
+        def post_message(text):
+            self.slack_client.api_call("chat.postMessage", channel=channel, text=text, as_user=True)
+
+        if not common_id:
+            post_message(":sob:")
+            time.sleep(1)
+            post_message("It doesn't look like you're allowed to talk to me!")
+            return False
 
         if len(message) == 0:
-            self.post_message(random.choice(self.no_text_messages), channel)
+            post_message(random.choice(self.no_text_messages))
             return False
-
-        elif len(message) == 1:
-            self.post_message("Ohh no :sweat:, that command needs an option!", channel)
-            self.post_message(self.available_commands_help, channel)
-            return False
-
-        elif len(message) > 1:
+        else:
             command = message[0]
-            options = message[1:]
+            options = list()
 
-        if command not in self.available_commands:
-            self.post_message(":thinking_face:", channel)
-            time.sleep(1)
-            self.post_message("I'm sorry but I don't understand your command: '{0}'".format(command), channel)
-            self.post_message(self.available_commands_help, channel)
-            return False
+            if command not in self.available_commands:
+                post_message(":thinking_face:")
+                time.sleep(1)
+                post_message("I'm sorry but I don't understand your command: {0}".format(command))
+                post_message(self.available_commands_help)
+                return False
 
-        command_function = self.available_commands[command][0]
-        self.post_message(command_function(options), channel)
+            command_function, number_of_options, help_text = self.available_commands[command]
+
+            if number_of_options > 0:
+                if len(message) - 1 != number_of_options:
+                    post_message("Looks like that command has the wrong number of options?")
+                    post_message(self.available_commands_help)
+                    return False
+
+                options = message[1:]
+
+            post_message(command_function(options, common_id))
 
     def listen_for_events(self):
         if not self.ready:
@@ -166,10 +185,8 @@ class SlackInterface(object):
         self.logger.info("Slack is connected and listening for mentions")
 
         while True:
-            for event in self.slack_client.rtm_read():
-                if not event:
-                    continue
-
+            for event in [i for i in self.slack_client.rtm_read() if i]:
+                print(event)
                 if self.match_event(event):
                     self.handle_event(event)
 

@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
 
-# 1. Read in config file
-# 2. Parse and load the Human interface
-# 3. Parse and load the Security interface
-
 import os
 import sys
 import yaml
@@ -16,8 +12,6 @@ from pydoc import locate
 from SecurityBot import human_interfaces
 from SecurityBot import security_interfaces
 
-class InterfaceNotReadyException(Exception):
-    pass
 
 class BreakListenException(Exception):
     pass
@@ -84,19 +78,20 @@ if __name__ == "__main__":
         config = yaml.load(config_file)
         logger.debug("Loaded Config: {0}".format(config))
 
-    # Load the interfaces
+    # Load the interface classes
     security_interfaces = interface_loader(os.path.dirname(security_interfaces.__file__))
     logger.debug("Loaded Security Interfaces: {0}".format(", ".join(security_interfaces.keys())))
 
     human_interfaces = interface_loader(os.path.dirname(human_interfaces.__file__))
     logger.debug("Loaded Human Interfaces: {0}".format(", ".join(human_interfaces.keys())))
 
-    # Load the one specific to this config
+    # Choose the one specific to this config
     SecurityInterfaceClass = security_interfaces.get(config["security_interface"]["name"])
     HumanInterfaceClass = human_interfaces.get(config["human_interface"]["name"])
 
-    security_interface = SecurityInterfaceClass(config["security_interface"], logger)
-    human_interface = HumanInterfaceClass(config["human_interface"], security_interface, logger)
+    # Initialize the classes
+    security_interface = SecurityInterfaceClass(config["security_interface"], config["permissions"], logger)
+    human_interface = HumanInterfaceClass(config["human_interface"], config["users"], security_interface, logger)
 
     # Ensure the two interfaces are ready (connect to their backend/etc)
     if not human_interface.is_ready():
