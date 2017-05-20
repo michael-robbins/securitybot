@@ -8,7 +8,9 @@ human_interface:
 
 security_interface:
     name: zoneminder
-    api_key: <key>
+    url: <protocol>://<ip_address>:<port>/zm
+    username: <username>
+    password: <password>
 
 users:
     - 'slack:<slack_user_id>:<common_name>'

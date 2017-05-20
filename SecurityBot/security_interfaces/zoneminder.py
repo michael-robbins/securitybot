@@ -1,6 +1,7 @@
 from collections import defaultdict
 
 import string
+import requests
 
 
 class ZoneMinderInterface(object):
@@ -25,10 +26,46 @@ class ZoneMinderInterface(object):
             "permissions": (self.list_permissions, 0, "Shows all the loaded permissions for ZoneMinder")
         }
 
+        self.session = None
+
     def get_commands(self):
         return self.commands
 
+    def connect_to_zm(self):
+        url_join_char = '/'
+
+        if self.config["url"].endswith("/"):
+            url_join_char = ''
+
+        auth_url = "{0}{1}index.php".format(self.config["url"], url_join_char)
+        auth_payload = {
+            "username": self.config["username"],
+            "password": self.config["password"],
+            "action": "login",
+            "view": "console",
+        }
+
+        self.session = requests.Session()
+        auth_response = self.session.post(auth_url, data=auth_payload)
+
+        if auth_response.status_code != requests.codes.ok:
+            self.logger.error("Received a bad status code from ZoneMinder while authenticating")
+            return False
+
+        # Test out our authentication against an endpoint
+        monitors_url = "{0}{1}api/monitors.json".format(self.config["url"], url_join_char)
+        monitors_response = self.session.get(monitors_url)
+
+        if monitors_response.status_code != requests.codes.ok:
+            self.logger.error("Failed to log into Zoneminder correctly")
+            return False
+
+        return True
+
     def is_ready(self):
+        if not self.connect_to_zm():
+            return False
+
         return True
 
     def arm_location(self, options, common_id):

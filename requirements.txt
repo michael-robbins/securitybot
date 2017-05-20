@@ -1,2 +1,3 @@
-pyyaml==3.12
-slackclient==1.0.5
+pyyaml
+slackclient
+requests
