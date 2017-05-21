@@ -17,4 +17,7 @@ users:
 
 permissions:
     # You can provide '*' as the command or option to make it match anything the user types
-    - 'zoneminder:<common_name>:<command>:<option>'
+    - 'zoneminder:<common_name>:<command>:<location>'
+
+locations:
+    - 'zoneminder:<location>:<monitor_id>'

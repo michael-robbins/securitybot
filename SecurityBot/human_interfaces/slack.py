@@ -38,8 +38,8 @@ class SlackInterface(object):
         self.available_commands_help = "Available commands are:\n```"
         self.available_commands_help += "{0:<20}{1}\n".format("Command", "Help")
 
-        for command, (func, options, help_text) in self.available_commands.items():
-            self.available_commands_help += "{0:<20}{1}\n".format("'{0}'".format(command), help_text)
+        for command, command_dict in self.available_commands.items():
+            self.available_commands_help += "{0:<20}{1}\n".format("'{0}'".format(command), command_dict["help"])
 
         self.available_commands_help += "```\n\n"
 
@@ -163,17 +163,17 @@ class SlackInterface(object):
                 post_message(self.available_commands_help)
                 return False
 
-            command_function, number_of_options, help_text = self.available_commands[command]
+            command = self.available_commands[command]
 
-            if number_of_options > 0:
-                if len(message) - 1 != number_of_options:
+            if command["num_args"] > 0:
+                if len(message) - 1 != command["num_args"]:
                     post_message("Looks like that command has the wrong number of options?")
                     post_message(self.available_commands_help)
                     return False
 
                 options = message[1:]
 
-            post_message(command_function(options, common_id))
+            post_message(command["function"](options, common_id))
 
     def listen_for_events(self):
         if not self.ready:

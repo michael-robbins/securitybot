@@ -1,16 +1,20 @@
 from collections import defaultdict
 
-import string
 import requests
 
 
 class ZoneMinderInterface(object):
     name = "zoneminder"
 
-    def __init__(self, config, permissions, logger):
+    def __init__(self, config, permissions, locations, logger):
         self.config = config
         self.permissions = defaultdict(list)
+        self.locations = dict()
         self.logger = logger
+
+        # Ensure a consistent URL format
+        while self.config["url"].endswith("/"):
+            self.config["url"] = self.config["url"][0:-1]
 
         for permission in permissions:
             interface, common_id, command, option = permission.split(':')
@@ -18,12 +22,49 @@ class ZoneMinderInterface(object):
             if interface != self.name:
                 continue
 
-            self.permissions[common_id].append((command, option))
+            if ',' in command:
+                commands = command.split(',')
+            else:
+                commands = [command]
+
+            if ',' in option:
+                options = option.split(',')
+            else:
+                options = [option]
+
+            for command in commands:
+                for option in options:
+                    self.permissions[common_id].append((command, option))
+
+        for location_string in locations:
+            interface, location, monitor_id = location_string.split(':')
+
+            if interface != self.name:
+                continue
+
+            self.locations[location] = monitor_id
 
         self.commands = {
-            "arm": (self.arm_location, 1, "Arms a location, eg 'arm apartment'"),
-            "disarm": (self.disarm_location, 1, "Disarms a location, eg 'disarm whitehouse'"),
-            "permissions": (self.list_permissions, 0, "Shows all the loaded permissions for ZoneMinder")
+            "arm": {
+                "function": self.arm_location,
+                "num_args": 1,
+                "help": "Arms a location, eg 'arm apartment'",
+            },
+            "disarm": {
+                "function": self.disarm_location,
+                "num_args": 1,
+                "help": "Disarms a location, eg 'disarm apartment'",
+            },
+            "status": {
+                "function": self.status_location,
+                "num_args": 1,
+                "help": "Shows the status of the location, eg 'status apartment'"
+            },
+            "permissions": {
+                "function": self.list_permissions,
+                "num_args": 0,
+                "help": "Shows all the loaded permissions for ZoneMinder",
+            },
         }
 
         self.session = None
@@ -32,12 +73,7 @@ class ZoneMinderInterface(object):
         return self.commands
 
     def connect_to_zm(self):
-        url_join_char = '/'
-
-        if self.config["url"].endswith("/"):
-            url_join_char = ''
-
-        auth_url = "{0}{1}index.php".format(self.config["url"], url_join_char)
+        auth_url = "{0}/index.php".format(self.config["url"])
         auth_payload = {
             "username": self.config["username"],
             "password": self.config["password"],
@@ -53,7 +89,7 @@ class ZoneMinderInterface(object):
             return False
 
         # Test out our authentication against an endpoint
-        monitors_url = "{0}{1}api/monitors.json".format(self.config["url"], url_join_char)
+        monitors_url = "{0}/api/monitors.json".format(self.config["url"])
         monitors_response = self.session.get(monitors_url)
 
         if monitors_response.status_code != requests.codes.ok:
@@ -62,55 +98,136 @@ class ZoneMinderInterface(object):
 
         return True
 
+    def query_zm(self, endpoint):
+        pass
+
+    def status_of_monitor(self, monitor_id, location):
+        endpoint = "{0}/api/monitors/alarm/id:{1}/command:status.json".format(self.config["url"], monitor_id)
+
+        monitor_status_response = self.session.get(endpoint)
+
+        if monitor_status_response.status_code != requests.codes.ok:
+            return "Failed to get the status of {0}, sorry :sob:".format(location.title())
+
+        status = int(monitor_status_response.json()["status"])
+
+        if status == 0:
+            return "{0} is fine!".format(location.title())
+        elif status == 2:
+            return "{0} totes under attack!".format(location.title())
+        else:
+            return "{0} is returning an unknown status of {1}!".format(location.title(), status)
+
+    def arm_monitor(self, monitor_id, location):
+        mode = "Modect"
+        endpoint = "{0}/api/monitors/{1}.json".format(self.config["url"], monitor_id)
+        payload = {
+            "Monitor[Function]": mode,
+            "Monitor[Enabled]": 1,
+        }
+
+        arm_response = self.session.post(endpoint, data=payload)
+        print(arm_response.json())
+
+        if arm_response.status_code != requests.codes.ok:
+            return "Failed to arm {0}, sorry :sob:".format(location.title())
+
+        return "Armed!"
+
+    def disarm_monitor(self, monitor_id, location):
+        mode = "Monitor"
+        endpoint = "{0}/api/monitors/{1}.json".format(self.config["url"], monitor_id)
+        payload = {
+            "Monitor[Function]": mode,
+            "Monitor[Enabled]": 1,
+        }
+
+        disarm_response = self.session.post(endpoint, data=payload)
+        print(disarm_response.json())
+
+        if disarm_response.status_code != requests.codes.ok:
+            return "Failed to disarm {0}, sorry :sob:".format(location.title())
+
+        return "Disarmed!"
+
     def is_ready(self):
         if not self.connect_to_zm():
             return False
 
         return True
 
-    def arm_location(self, options, common_id):
-        if len(options) != 1:
-            return "Uhh oh, looks like you've provided the wrong number of options to 'arm'"
-
-        location = options[0]
+    def has_permissions(self, command, options, common_id):
+        if command not in self.commands.keys():
+            self.logger.error("The permission check got an unknown command")
+            return False
 
         permissions = self.permissions.get(common_id)
 
         if not permissions:
             return "Sorry, you don't have any permissions to run that!"
 
-        locations = [location for command, location in permissions if command in ['arm', '*']]
+        if len(options) != self.commands[command]["num_args"]:
+            return "Uhh oh, looks like you've provided the wrong number of options to '{0}'".format(command)
 
-        if not locations:
+        allowed_options = [o for c, o in permissions if c in [command, '*']]
+
+        if not allowed_options:
             return "Sorry, you're not allowed to run that command!"
 
-        if '*' not in locations and location not in locations:
-            return "Sorry, you're not allowed to run this command with that location!"
+        if '*' not in allowed_options:
+            for option in options:
+                if option not in allowed_options:
+                    return "Sorry, you're not allowed to run this command with that option!"
 
-        # User is allowed to run that (command, location) pair
-        return "{0} has been armed!".format(string.capwords(location))
+        return None
+
+    def arm_location(self, options, common_id):
+        command = "arm"
+        permission_failure = self.has_permissions(command, options, common_id)
+
+        if permission_failure:
+            return permission_failure
+
+        location = options[0]
+
+        if location not in self.locations:
+            return "Unknown location sorry!"
+
+        monitor_id = self.locations[location]
+
+        return self.arm_monitor(monitor_id, location)
 
     def disarm_location(self, options, common_id):
-        if len(options) != 1:
-            return "Uhh oh, looks like you've provided the wrong number of options to 'disarm'"
+        command = "disarm"
+        permission_failure = self.has_permissions(command, options, common_id)
+
+        if permission_failure:
+            return permission_failure
 
         location = options[0]
 
-        permissions = self.permissions.get(common_id)
+        if location not in self.locations:
+            return "Unknown location sorry!"
 
-        if not permissions:
-            return "Sorry, you don't have any permissions to run that!"
+        monitor_id = self.locations[location]
 
-        locations = [location for command, location in permissions if command in ['arm', '*']]
+        return self.disarm_monitor(monitor_id, location)
 
-        if not locations:
-            return "Sorry, you're not allowed to run that command!"
+    def status_location(self, options, common_id):
+        command = "status"
+        permission_failure = self.has_permissions(command, options, common_id)
 
-        if '*' not in locations and location not in locations:
-            return "Sorry, you're not allowed to run this command with that location!"
+        if permission_failure:
+            return permission_failure
 
-        # User is allowed to run that (command, option) pair
-        return "{0} has been disarmed!".format(string.capwords(location))
+        location = options[0]
+
+        if location not in self.locations:
+            return "Unknown location sorry!"
+
+        monitor_id = self.locations[location]
+
+        return self.status_of_monitor(monitor_id, location)
 
     def list_permissions(self, *_):
         pretty_list = "These are the permissions I've loaded:\n```"
