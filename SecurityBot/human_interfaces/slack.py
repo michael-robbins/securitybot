@@ -165,8 +165,8 @@ class SlackInterface(object):
 
             command = self.available_commands[command]
 
-            if command["num_args"] > 0:
-                if len(message) - 1 != command["num_args"]:
+            if len(command["num_args"]) > 0:
+                if len(message) - 1 not in command["num_args"]:
                     post_message("Looks like that command has the wrong number of options?")
                     post_message(self.available_commands_help)
                     return False

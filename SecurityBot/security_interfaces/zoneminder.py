@@ -1,5 +1,6 @@
 from collections import defaultdict
 
+import itertools
 import requests
 
 
@@ -47,24 +48,29 @@ class ZoneMinderInterface(object):
         self.commands = {
             "arm": {
                 "function": self.arm_location,
-                "num_args": 1,
+                "num_args": range(1, 4),
                 "help": "Arms a location, eg 'arm apartment'",
             },
             "disarm": {
                 "function": self.disarm_location,
-                "num_args": 1,
+                "num_args": range(1, 4),
                 "help": "Disarms a location, eg 'disarm apartment'",
             },
             "status": {
                 "function": self.status_location,
-                "num_args": 1,
+                "num_args": range(1, 4),
                 "help": "Shows the status of the location, eg 'status apartment'"
             },
             "permissions": {
                 "function": self.list_permissions,
-                "num_args": 0,
+                "num_args": range(0),
                 "help": "Shows all the loaded permissions for ZoneMinder",
             },
+            "locations": {
+                "function": self.list_locations,
+                "num_args": range(0),
+                "help": "Shows all the loaded locations for ZoneMinder",
+            }
         }
 
         self.session = None
@@ -98,9 +104,6 @@ class ZoneMinderInterface(object):
 
         return True
 
-    def query_zm(self, endpoint):
-        pass
-
     def status_of_monitor(self, monitor_id, location):
         endpoint = "{0}/api/monitors/alarm/id:{1}/command:status.json".format(self.config["url"], monitor_id)
 
@@ -127,7 +130,6 @@ class ZoneMinderInterface(object):
         }
 
         arm_response = self.session.post(endpoint, data=payload)
-        print(arm_response.json())
 
         if arm_response.status_code != requests.codes.ok:
             return "Failed to arm {0}, sorry :sob:".format(location.title())
@@ -143,7 +145,6 @@ class ZoneMinderInterface(object):
         }
 
         disarm_response = self.session.post(endpoint, data=payload)
-        print(disarm_response.json())
 
         if disarm_response.status_code != requests.codes.ok:
             return "Failed to disarm {0}, sorry :sob:".format(location.title())
@@ -156,7 +157,7 @@ class ZoneMinderInterface(object):
 
         return True
 
-    def has_permissions(self, command, options, common_id):
+    def has_permissions(self, command, options, common_id, option_name="option"):
         if command not in self.commands.keys():
             self.logger.error("The permission check got an unknown command")
             return False
@@ -166,29 +167,31 @@ class ZoneMinderInterface(object):
         if not permissions:
             return "Sorry, you don't have any permissions to run that!"
 
-        if len(options) != self.commands[command]["num_args"]:
+        if len(options) not in self.commands[command]["num_args"]:
             return "Uhh oh, looks like you've provided the wrong number of options to '{0}'".format(command)
 
-        allowed_options = [o for c, o in permissions if c in [command, '*']]
+        allowed_options = [o.split(' ') for c, o in permissions if c in [command, '*']]
 
         if not allowed_options:
             return "Sorry, you're not allowed to run that command!"
 
+        flat_allowed_options = list(itertools.chain.from_iterable(allowed_options))
+
         if '*' not in allowed_options:
             for option in options:
-                if option not in allowed_options:
-                    return "Sorry, you're not allowed to run this command with that option!"
+                if option not in flat_allowed_options:
+                    return "Sorry, you're not allowed to run this command with that {0}!".format(option_name)
 
         return None
 
     def arm_location(self, options, common_id):
         command = "arm"
-        permission_failure = self.has_permissions(command, options, common_id)
+        permission_failure = self.has_permissions(command, options, common_id, option_name="location")
 
         if permission_failure:
             return permission_failure
 
-        location = options[0]
+        location = ' '.join(options)
 
         if location not in self.locations:
             return "Unknown location sorry!"
@@ -199,12 +202,12 @@ class ZoneMinderInterface(object):
 
     def disarm_location(self, options, common_id):
         command = "disarm"
-        permission_failure = self.has_permissions(command, options, common_id)
+        permission_failure = self.has_permissions(command, options, common_id, option_name="location")
 
         if permission_failure:
             return permission_failure
 
-        location = options[0]
+        location = ' '.join(options)
 
         if location not in self.locations:
             return "Unknown location sorry!"
@@ -215,12 +218,12 @@ class ZoneMinderInterface(object):
 
     def status_location(self, options, common_id):
         command = "status"
-        permission_failure = self.has_permissions(command, options, common_id)
+        permission_failure = self.has_permissions(command, options, common_id, option_name="location")
 
         if permission_failure:
             return permission_failure
 
-        location = options[0]
+        location = ' '.join(options)
 
         if location not in self.locations:
             return "Unknown location sorry!"
@@ -235,6 +238,15 @@ class ZoneMinderInterface(object):
         for common_id, permissions in self.permissions.items():
             for command, option in permissions:
                 pretty_list += "{0:<15}{1:<10}{2:<10}\n".format(common_id, command, option)
+
+        pretty_list += "```"
+        return pretty_list
+
+    def list_locations(self, *_):
+        pretty_list = "These are the locations I've loaded:\n```"
+        pretty_list += "{0:<20}{1:<10}\n".format("Location", "Monitor ID")
+        for location, monitor_id in self.locations.items():
+            pretty_list += "{0:<20}{1:<10}\n".format(location, monitor_id)
 
         pretty_list += "```"
         return pretty_list
