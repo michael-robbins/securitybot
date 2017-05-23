@@ -3,6 +3,7 @@ from slackclient import SlackClient
 
 import random
 import time
+import re
 
 
 class SlackInterface(object):
@@ -107,13 +108,17 @@ class SlackInterface(object):
             return False
 
         # We ignore other bot messages
-        if "bot_id" in event or "user" in event and event["user"] == self.bot_id:
+        if "bot_id" in event or ("user" in event and event["user"] == self.bot_id):
             return False
 
-        event_channel_id = event.get("channel")
+        # We only want events with a channel
+        if "channel" not in event:
+            return False
 
-        # Skip this event if the channel doesn't match
-        if event_channel_id is not None and event_channel_id != self.channel_id:
+        event_channel_id = event["channel"]
+
+        # Skip this event if the channel doesn't match and we're in a general channel
+        if event_channel_id.startswith('C') and event_channel_id != self.channel_id:
             return False
 
         # We want time based text messages
@@ -128,14 +133,27 @@ class SlackInterface(object):
         # Match on the bot reference being in the message
         bot_mention = "<@{0}>".format(self.bot_id)
 
-        if bot_mention in event["text"]:
+        # The only direct message we listen to is one to us!
+        if event_channel_id.startswith('D'):
+            return True
+
+        # Listen to group chats with a mention to us
+        if event_channel_id.startswith('G') and bot_mention in event["text"]:
+            return True
+
+        # Listen to our registered channel chat for mentions
+        if event_channel_id.startswith('C') and bot_mention in event["text"]:
             return True
 
         return False
 
     def handle_event(self, event):
         # Parse the message and drop the bot user mention
-        message = event["text"].strip().lower().split(' ')[1:]
+        message = event["text"].strip()
+
+        # Remove the user mention and break the message out into bits
+        message = re.sub("<@U[0-9A-Z]{8}>", '', message, 1).strip().lower().split(' ')
+
         channel = event["channel"]
         user_id = event["user"]
         common_id = self.users.get(user_id)
