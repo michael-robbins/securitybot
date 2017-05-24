@@ -3,18 +3,16 @@
 import os
 import sys
 import yaml
-import argparse
-import logging
-
 import inspect
+import logging
+import argparse
+import threading
+
 from pydoc import locate
+from queue import Queue
 
 from SecurityBot import human_interfaces
 from SecurityBot import security_interfaces
-
-
-class BreakListenException(Exception):
-    pass
 
 
 def interface_loader(module_directory):
@@ -87,14 +85,22 @@ if __name__ == "__main__":
 
     # Choose the one specific to this config
     SecurityInterfaceClass = security_interfaces.get(config["security_interface"]["name"])
+    security_interface_queue = Queue()
+
     HumanInterfaceClass = human_interfaces.get(config["human_interface"]["name"])
+    human_interface_queue = Queue()
 
     # Initialize the classes
     security_interface = SecurityInterfaceClass(config["security_interface"],
                                                 config["permissions"],
                                                 config["locations"],
+                                                (human_interface_queue, security_interface_queue),
                                                 logger)
-    human_interface = HumanInterfaceClass(config["human_interface"], config["users"], security_interface, logger)
+    human_interface = HumanInterfaceClass(config["human_interface"],
+                                          config["users"],
+                                          (security_interface_queue, human_interface_queue),
+                                          security_interface.get_commands(),
+                                          logger)
 
     # Ensure the two interfaces are ready (connect to their backend/etc)
     if not human_interface.is_ready():
@@ -105,8 +111,11 @@ if __name__ == "__main__":
         logger.error("{0} interface failed to ready up".format(security_interface.name.title()))
         sys.exit(1)
 
-    # Listen loop
-    try:
-        human_interface.listen_for_events()
-    except BreakListenException as e:
-        logger.info(e)
+    human_interface_thread = threading.Thread(target=human_interface.listen_for_events)
+    human_interface_thread.start()
+
+    security_interface_thread = threading.Thread(target=security_interface.watch_for_events)
+    security_interface_thread.start()
+
+    human_interface_thread.join()
+    security_interface_thread.join()

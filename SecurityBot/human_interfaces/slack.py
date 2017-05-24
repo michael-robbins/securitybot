@@ -15,10 +15,10 @@ class SlackInterface(object):
         "Sorry, I didn't quite catch that",
     )
 
-    def __init__(self, config, users, security_interface, logger):
+    def __init__(self, config, users, queues, available_commands, logger):
         self.config = config
         self.users = dict()
-        self.security_interface = security_interface
+        self.read_queue, self.write_queue = queues
         self.logger = logger
         self.slack_client = None
         self.bot_id = config.get("bot_id", None)
@@ -34,7 +34,7 @@ class SlackInterface(object):
 
             self.users[interface_id] = common_id
 
-        self.available_commands = self.security_interface.get_commands()
+        self.available_commands = available_commands
 
         self.available_commands_help = "Available commands are:\n```"
         self.available_commands_help += "{0:<20}{1}\n".format("Command", "Help")
@@ -204,7 +204,7 @@ class SlackInterface(object):
 
         while True:
             for event in [i for i in self.slack_client.rtm_read() if i]:
-                print(event)
+                self.logger.debug(event)
                 if self.match_event(event):
                     self.handle_event(event)
 

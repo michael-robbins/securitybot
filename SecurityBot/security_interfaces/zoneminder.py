@@ -7,10 +7,11 @@ import requests
 class ZoneMinderInterface(object):
     name = "zoneminder"
 
-    def __init__(self, config, permissions, locations, logger):
+    def __init__(self, config, permissions, locations, queues, logger):
         self.config = config
         self.permissions = defaultdict(list)
         self.locations = dict()
+        self.read_queue, self.write_queue = queues
         self.logger = logger
 
         # Ensure a consistent URL format
@@ -250,3 +251,7 @@ class ZoneMinderInterface(object):
 
         pretty_list += "```"
         return pretty_list
+
+    def watch_for_events(self):
+        while True:
+            print(self.read_queue.get(block=True))
