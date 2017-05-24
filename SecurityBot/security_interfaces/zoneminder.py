@@ -254,4 +254,11 @@ class ZoneMinderInterface(object):
 
     def watch_for_events(self):
         while True:
+            # Check ZoneMinder for any new alerts
+            # Parse the alert and extract a picture/frame
+            # Send the picture/alert/message into the write queue
+            print(self.read_queue.get(block=True))
+
+            # Check if there's any commands to run from the read queue
+            # Run command and return any output into the write queue
             print(self.read_queue.get(block=True))
