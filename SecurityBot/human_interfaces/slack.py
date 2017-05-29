@@ -1,5 +1,6 @@
 from slackclient._server import SlackConnectionError, SlackLoginError
 from slackclient import SlackClient
+from queue import Empty
 
 import random
 import time
@@ -181,17 +182,23 @@ class SlackInterface(object):
                 post_message(self.available_commands_help)
                 return False
 
-            command = self.available_commands[command]
-
-            if len(command["num_args"]) > 0:
-                if len(message) - 1 not in command["num_args"]:
+            num_args = self.available_commands[command]["num_args"]
+            if len(num_args) > 0:
+                if len(message) - 1 not in num_args:
                     post_message("Looks like that command has the wrong number of options?")
                     post_message(self.available_commands_help)
                     return False
 
                 options = message[1:]
 
-            post_message(command["function"](options, common_id))
+            self.write_queue.put({
+                "command": command,
+                "options": options,
+                "common_id": common_id,
+                "response_options": {
+                    "channel": channel,
+                }
+            })
 
     def listen_for_events(self):
         if not self.ready:
@@ -209,3 +216,13 @@ class SlackInterface(object):
                     self.handle_event(event)
 
             time.sleep(SlackInterface.web_socket_sleep_delay)
+
+            try:
+                response = self.read_queue.get(block=False)
+                self.logger.debug(response)
+                self.slack_client.api_call("chat.postMessage",
+                                           channel=response["options"]["channel"],
+                                           text=response["text"],
+                                           as_user=True)
+            except Empty:
+                pass

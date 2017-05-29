@@ -1,7 +1,9 @@
 from collections import defaultdict
+from queue import Empty
 
 import itertools
 import requests
+import time
 
 
 class ZoneMinderInterface(object):
@@ -257,8 +259,17 @@ class ZoneMinderInterface(object):
             # Check ZoneMinder for any new alerts
             # Parse the alert and extract a picture/frame
             # Send the picture/alert/message into the write queue
-            print(self.read_queue.get(block=True))
+            try:
+                message = self.read_queue.get(block=False)
+                self.logger.debug(message)
+                command = self.commands[message["command"]]["function"]
+                response = command(message["options"], message["common_id"])
 
-            # Check if there's any commands to run from the read queue
-            # Run command and return any output into the write queue
-            print(self.read_queue.get(block=True))
+                self.write_queue.put({
+                    "text": response,
+                    "options": message["response_options"],
+                })
+            except Empty:
+                pass
+
+            time.sleep(1)
