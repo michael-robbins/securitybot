@@ -104,6 +104,11 @@ class SlackInterface(object):
         return True
 
     def match_event(self, event):
+        """
+        If the event is directed at the bot, return true, else false
+        :param event: 
+        :return: 
+        """
         # We only want text based events
         if "text" not in event:
             return False
@@ -148,7 +153,12 @@ class SlackInterface(object):
 
         return False
 
-    def handle_event(self, event):
+    def build_request(self, event):
+        """
+        Takes an event (dict) and returns a generic request (dict) that the security interface understands
+        :param event: 
+        :return: 
+        """
         # Parse the message and drop the bot user mention
         message = event["text"].strip()
 
@@ -159,6 +169,7 @@ class SlackInterface(object):
         user_id = event["user"]
         common_id = self.users.get(user_id)
 
+        # Create a closure to not require us to provide the channel each time
         def post_message(text):
             self.slack_client.api_call("chat.postMessage", channel=channel, text=text, as_user=True)
 
@@ -166,11 +177,11 @@ class SlackInterface(object):
             post_message(":sob:")
             time.sleep(1)
             post_message("It doesn't look like you're allowed to talk to me!")
-            return False
+            return None
 
         if len(message) == 0:
             post_message(random.choice(self.no_text_messages))
-            return False
+            return None
         else:
             command = message[0]
             options = list()
@@ -180,27 +191,33 @@ class SlackInterface(object):
                 time.sleep(1)
                 post_message("I'm sorry but I don't understand your command: {0}".format(command))
                 post_message(self.available_commands_help)
-                return False
+                return None
 
             num_args = self.available_commands[command]["num_args"]
             if len(num_args) > 0:
                 if len(message) - 1 not in num_args:
-                    post_message("Looks like that command has the wrong number of options?")
+                    post_message("Looks like your command has the wrong number of options?")
                     post_message(self.available_commands_help)
-                    return False
+                    return None
 
                 options = message[1:]
 
-            self.write_queue.put({
+            return {
                 "command": command,
                 "options": options,
                 "common_id": common_id,
                 "response_options": {
                     "channel": channel,
                 }
-            })
+            }
 
     def listen_for_events(self):
+        """
+        Event loop that will listen to the slack fire-hose for events
+        For events with commands, we build a request and send it to the security interface
+        We then check for responses from the security interface and post the text response
+        :return: 
+        """
         if not self.ready:
             raise RuntimeError("is_ready has not been called/returned false")
 
@@ -210,12 +227,17 @@ class SlackInterface(object):
         self.logger.info("Slack is connected and listening for mentions")
 
         while True:
-            for event in [i for i in self.slack_client.rtm_read() if i]:
-                self.logger.debug(event)
-                if self.match_event(event):
-                    self.handle_event(event)
+            for event in self.slack_client.rtm_read():
+                if not event:
+                    continue
 
-            time.sleep(SlackInterface.web_socket_sleep_delay)
+                self.logger.debug(event)
+
+                if self.match_event(event):
+                    request = self.build_request(event)
+
+                    if request:
+                        self.write_queue.put(request)
 
             try:
                 response = self.read_queue.get(block=False)
@@ -225,4 +247,8 @@ class SlackInterface(object):
                                            text=response["text"],
                                            as_user=True)
             except Empty:
+                # We don't care if the read queue is empty
                 pass
+
+            # Just so we're not smashing the slack feed
+            time.sleep(1)
