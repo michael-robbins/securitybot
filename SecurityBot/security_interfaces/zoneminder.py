@@ -13,8 +13,12 @@ class ZoneMinderInterface(object):
         self.config = config
         self.permissions = defaultdict(list)
         self.locations = dict()
+        self.monitors = dict()
         self.read_queue, self.write_queue = queues
         self.logger = logger
+
+        self.current_alarms = []
+        self.ack_alarms = []
 
         # Ensure a consistent URL format
         while self.config["url"].endswith("/"):
@@ -46,7 +50,9 @@ class ZoneMinderInterface(object):
             if interface != self.name:
                 continue
 
+            # Build up 2 dicts for easy translation between monitors and locations
             self.locations[location] = monitor_id
+            self.monitors[monitor_id] = location
 
         self.commands = {
             "arm": {
@@ -58,6 +64,11 @@ class ZoneMinderInterface(object):
                 "function": self.disarm_location,
                 "num_args": range(1, 4),
                 "help": "Disarms a location, eg 'disarm apartment'",
+            },
+            "ack": {
+                "function": self.ack_location,
+                "num_args": range(1, 4),
+                "help": "Ack's a location that is currently under attack",
             },
             "status": {
                 "function": self.status_location,
@@ -115,14 +126,10 @@ class ZoneMinderInterface(object):
         if monitor_status_response.status_code != requests.codes.ok:
             return "Failed to get the status of {0}, sorry :sob:".format(location.title())
 
-        status = int(monitor_status_response.json()["status"])
-
-        if status == 0:
-            return "{0} is fine!".format(location.title())
-        elif status == 2:
-            return "{0} totes under attack!".format(location.title())
-        else:
-            return "{0} is returning an unknown status of {1}!".format(location.title(), status)
+        try:
+            return int(monitor_status_response.json()["status"])
+        except ValueError:
+            return None
 
     def arm_monitor(self, monitor_id, location):
         mode = "Modect"
@@ -219,6 +226,33 @@ class ZoneMinderInterface(object):
 
         return self.disarm_monitor(monitor_id, location)
 
+    def ack_location(self, options, common_id):
+        command = "ack"
+        permission_failure = self.has_permissions(command, options, common_id, option_name="location")
+
+        if permission_failure:
+            return permission_failure
+
+        location = ' '.join(options)
+
+        if location not in self.locations:
+            return "Unknown location sorry!"
+
+        monitor_id = self.locations[location]
+
+        return self.ack_alarm(monitor_id, location)
+
+    def ack_alarm(self, monitor_id, location):
+        if monitor_id not in self.current_alarms:
+            return "Err, that location is not under attack :face_with_rolling_eyes:"
+
+        if monitor_id in self.ack_alarms:
+            return "Err, you've already ack'd this alarm :face_with_rolling_eyes:"
+
+        self.ack_alarms.append(monitor_id)
+
+        return "Successfully ack'd alarm for {0}".format(location)
+
     def status_location(self, options, common_id):
         command = "status"
         permission_failure = self.has_permissions(command, options, common_id, option_name="location")
@@ -233,7 +267,14 @@ class ZoneMinderInterface(object):
 
         monitor_id = self.locations[location]
 
-        return self.status_of_monitor(monitor_id, location)
+        status = self.status_of_monitor(monitor_id, location)
+
+        if status == 0:
+            return "{0} is fine!".format(location.title())
+        elif status == 2:
+            return "{0} totes under attack!".format(location.title())
+        else:
+            return "{0} is returning an unknown status of {1}!".format(location.title(), status)
 
     def list_permissions(self, *_):
         pretty_list = "These are the permissions I've loaded:\n```"
@@ -254,6 +295,16 @@ class ZoneMinderInterface(object):
         pretty_list += "```"
         return pretty_list
 
+    def check_monitors(self, status_filter):
+        monitor_ids = []
+        for location, monitor_id in self.locations.items():
+            status = self.status_of_monitor(monitor_id, location)
+
+            if status == status_filter:
+                monitor_ids.append(monitor_id)
+
+        return monitor_ids
+
     def watch_for_events(self):
         while True:
             # Check ZoneMinder for any new alerts
@@ -261,15 +312,35 @@ class ZoneMinderInterface(object):
             # Send the picture/alert/message into the write queue
             try:
                 message = self.read_queue.get(block=False)
+                self.logger.debug("Read from read queue")
                 self.logger.debug(message)
                 command = self.commands[message["command"]]["function"]
                 response = command(message["options"], message["common_id"])
+                self.logger.debug("Got back '{0}' from command".format(response))
 
                 self.write_queue.put({
                     "text": response,
                     "options": message["response_options"],
                 })
+                self.logger.debug("Writen to human read queue!")
             except Empty:
                 pass
+
+            # Check to see if there are any active alarms on a monitor
+            alarmed_monitors = self.check_monitors(status_filter=2)
+
+            for monitor_id in alarmed_monitors:
+                if monitor_id in self.current_alarms:
+                    # This alarm has already been posted
+                    continue
+
+                self.write_queue.put({
+                    "text": "Uhh ohh, {0} is under attack!".format(self.monitors[monitor_id]),
+                    "options": {
+                        "channel": None
+                    }
+                })
+
+                self.current_alarms = alarmed_monitors
 
             time.sleep(1)

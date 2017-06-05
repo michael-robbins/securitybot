@@ -231,17 +231,24 @@ class SlackInterface(object):
                 if not event:
                     continue
 
-                self.logger.debug(event)
-
                 if self.match_event(event):
+                    self.logger.debug("Matched: {0}".format(event))
                     request = self.build_request(event)
 
                     if request:
                         self.write_queue.put(request)
+                else:
+                    self.logger.debug("No Match: {0}".format(event))
 
             try:
                 response = self.read_queue.get(block=False)
                 self.logger.debug(response)
+
+                # Default to the registered channel if the response has no channel
+                # This most likely occurs in proactive messages from the security interface
+                if response["options"]["channel"] is None:
+                    response["options"]["channel"] = self.channel_id
+
                 self.slack_client.api_call("chat.postMessage",
                                            channel=response["options"]["channel"],
                                            text=response["text"],
