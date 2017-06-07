@@ -111,10 +111,10 @@ if __name__ == "__main__":
         logger.error("{0} interface failed to ready up".format(security_interface.name.title()))
         sys.exit(1)
 
-    human_interface_thread = threading.Thread(target=human_interface.listen_for_events)
+    human_interface_thread = threading.Thread(target=human_interface.monitor)
     human_interface_thread.start()
 
-    security_interface_thread = threading.Thread(target=security_interface.watch_for_events)
+    security_interface_thread = threading.Thread(target=security_interface.monitor)
     security_interface_thread.start()
 
     human_interface_thread.join()

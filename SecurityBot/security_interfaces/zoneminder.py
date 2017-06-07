@@ -1,4 +1,5 @@
 from collections import defaultdict
+from datetime import datetime
 from queue import Empty
 
 import itertools
@@ -9,6 +10,9 @@ import time
 class ZoneMinderInterface(object):
     name = "zoneminder"
 
+    ALARM_INACTIVE = 0
+    ALARM_ACTIVE = 2
+
     def __init__(self, config, permissions, locations, queues, logger):
         self.config = config
         self.permissions = defaultdict(list)
@@ -17,8 +21,8 @@ class ZoneMinderInterface(object):
         self.read_queue, self.write_queue = queues
         self.logger = logger
 
-        self.current_alarms = []
-        self.ack_alarms = []
+        self.current_alarms = {}
+        self.ack_alarms = {}
 
         # Ensure a consistent URL format
         while self.config["url"].endswith("/"):
@@ -269,9 +273,9 @@ class ZoneMinderInterface(object):
 
         status = self.status_of_monitor(monitor_id, location)
 
-        if status == 0:
+        if status == self.ALARM_INACTIVE:
             return "{0} is fine!".format(location.title())
-        elif status == 2:
+        elif status == self.ALARM_ACTIVE:
             return "{0} totes under attack!".format(location.title())
         else:
             return "{0} is returning an unknown status of {1}!".format(location.title(), status)
@@ -305,18 +309,51 @@ class ZoneMinderInterface(object):
 
         return monitor_ids
 
-    def watch_for_events(self):
+    def check_for_alarms(self):
+        # Check to see if there are any active alarms on a monitor
+        alarmed_monitors = self.check_monitors(status_filter=self.ALARM_ACTIVE)
+
+        if not alarmed_monitors:
+            return
+
+        for monitor_id in alarmed_monitors:
+            if monitor_id in self.ack_alarms.keys():
+                # This alarm is fine
+                continue
+
+            if monitor_id in self.current_alarms:
+                # This alarm has already been posted
+                continue
+
+            # This monitor is experiencing a new alarm
+            alarm_details = {
+                "started": datetime.now(),
+                "updated": None,
+                "finished": None,
+                "ack": None,
+                "event_id": None,
+            }
+
+            self.write_queue.put({
+                "text": "Uhh ohh, {0} is under attack!".format(self.monitors[monitor_id]),
+                "options": {
+                    "channel": None
+                }
+            })
+
+            self.current_alarms = alarmed_monitors
+
+    def monitor(self):
         while True:
             # Check ZoneMinder for any new alerts
             # Parse the alert and extract a picture/frame
             # Send the picture/alert/message into the write queue
             try:
                 message = self.read_queue.get(block=False)
-                self.logger.debug("Read from read queue")
                 self.logger.debug(message)
+
                 command = self.commands[message["command"]]["function"]
                 response = command(message["options"], message["common_id"])
-                self.logger.debug("Got back '{0}' from command".format(response))
 
                 self.write_queue.put({
                     "text": response,
@@ -326,21 +363,6 @@ class ZoneMinderInterface(object):
             except Empty:
                 pass
 
-            # Check to see if there are any active alarms on a monitor
-            alarmed_monitors = self.check_monitors(status_filter=2)
-
-            for monitor_id in alarmed_monitors:
-                if monitor_id in self.current_alarms:
-                    # This alarm has already been posted
-                    continue
-
-                self.write_queue.put({
-                    "text": "Uhh ohh, {0} is under attack!".format(self.monitors[monitor_id]),
-                    "options": {
-                        "channel": None
-                    }
-                })
-
-                self.current_alarms = alarmed_monitors
+            self.check_for_alarms()
 
             time.sleep(1)

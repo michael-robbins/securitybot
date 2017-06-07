@@ -211,7 +211,7 @@ class SlackInterface(object):
                 }
             }
 
-    def listen_for_events(self):
+    def monitor(self):
         """
         Event loop that will listen to the slack fire-hose for events
         For events with commands, we build a request and send it to the security interface
