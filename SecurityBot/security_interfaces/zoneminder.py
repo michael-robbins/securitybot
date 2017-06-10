@@ -1,10 +1,11 @@
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from queue import Empty
 
 import itertools
 import requests
 import time
+import re
 
 
 class ZoneMinderInterface(object):
@@ -21,13 +22,41 @@ class ZoneMinderInterface(object):
         self.read_queue, self.write_queue = queues
         self.logger = logger
 
-        self.current_alarms = {}
-        self.ack_alarms = {}
+        self.alarms = {}
 
         # Ensure a consistent URL format
         while self.config["url"].endswith("/"):
             self.config["url"] = self.config["url"][0:-1]
 
+        # Check each delta setting and parse it
+        time_regex = re.compile(r"^([0-9]+)(hms)$")
+
+        delta_dict = {
+            's': lambda x: timedelta(seconds=x),
+            'm': lambda x: timedelta(minutes=x),
+            'h': lambda x: timedelta(hours=x),
+        }
+
+        delta_defaults = {
+            "alarm_alert_interval": timedelta(minutes=1),
+            "alarm_expires_at": timedelta(minutes=5),
+        }
+
+        for setting_name in ["alarm_alert_interval", "alarm_expires_at"]:
+            if self.config[setting_name]:
+                match = time_regex.match(self.config[setting_name])
+
+                if match:
+                    alert_interval, alert_time = match.group()
+                    self.config[setting_name] = delta_dict[alert_interval](int(alert_time))
+                else:
+                    self.logger.error("Invalid '{0}' value, skipping this setting".format(setting_name))
+            else:
+                self.config[setting_name] = delta_defaults[setting_name]
+                self.logger.warn("'{0}' is missing from config, loading default: {1}".format(setting_name,
+                                                                                             self.config[setting_name]))
+
+        # Parse and load all the permissions
         for permission in permissions:
             interface, common_id, command, option = permission.split(':')
 
@@ -48,6 +77,7 @@ class ZoneMinderInterface(object):
                 for option in options:
                     self.permissions[common_id].append((command, option))
 
+        # Parse and load all the locations
         for location_string in locations:
             interface, location, monitor_id = location_string.split(':')
 
@@ -247,13 +277,15 @@ class ZoneMinderInterface(object):
         return self.ack_alarm(monitor_id, location)
 
     def ack_alarm(self, monitor_id, location):
-        if monitor_id not in self.current_alarms:
-            return "Err, that location is not under attack :face_with_rolling_eyes:"
+        if monitor_id not in self.alarms:
+            return "Err, that location is not currently under attack :face_with_rolling_eyes:"
 
-        if monitor_id in self.ack_alarms:
+        alarm_details = self.alarms[monitor_id]
+
+        if alarm_details["ack"]:
             return "Err, you've already ack'd this alarm :face_with_rolling_eyes:"
 
-        self.ack_alarms.append(monitor_id)
+        alarm_details["ack"] = True
 
         return "Successfully ack'd alarm for {0}".format(location)
 
@@ -309,39 +341,50 @@ class ZoneMinderInterface(object):
 
         return monitor_ids
 
-    def check_for_alarms(self):
-        # Check to see if there are any active alarms on a monitor
-        alarmed_monitors = self.check_monitors(status_filter=self.ALARM_ACTIVE)
+    def expire_old_alarms(self):
+        for monitor_id, alarm_details in [(i, j) for (i, j) in self.alarms.items() if j["ack"]]:
+            if not alarm_details["finished"]:
+                # Alarm is still considered active, ignore it
+                continue
 
-        if not alarmed_monitors:
+            alarm_expires_at = alarm_details["finished"] + self.config["alarm_expires_at"]
+
+            if datetime.utcnow() > alarm_expires_at:
+                del self.alarms[monitor_id]
+                # TODO: Alert the user the ack'd alarm has expired
+
+    def update_alarm(self, monitor_id):
+        alarm_details = self.alarms[monitor_id]
+
+        if alarm_details["ack"]:
+            # Alarm has been ack'd, skip it
             return
 
-        for monitor_id in alarmed_monitors:
-            if monitor_id in self.ack_alarms.keys():
-                # This alarm is fine
-                continue
+        alert_at = alarm_details["updated"] + self.config["alarm_alert_interval"]
 
-            if monitor_id in self.current_alarms:
-                # This alarm has already been posted
-                continue
-
-            # This monitor is experiencing a new alarm
-            alarm_details = {
-                "started": datetime.now(),
-                "updated": None,
-                "finished": None,
-                "ack": None,
-                "event_id": None,
-            }
-
+        if datetime.utcnow() > alert_at:
             self.write_queue.put({
-                "text": "Uhh ohh, {0} is under attack!".format(self.monitors[monitor_id]),
+                "text": "btw, {0} is still under attack!".format(self.monitors[monitor_id]),
                 "options": {
                     "channel": None
                 }
             })
 
-            self.current_alarms = alarmed_monitors
+    def new_alarm(self, monitor_id):
+        self.alarms[monitor_id] = {
+            "started": datetime.utcnow(),
+            "updated": datetime.utcnow(),
+            "finished": None,
+            "ack": False,
+            "event_id": None,
+        }
+
+        self.write_queue.put({
+            "text": "Uhh ohh, {0} is under attack!".format(self.monitors[monitor_id]),
+            "options": {
+                "channel": None
+            }
+        })
 
     def monitor(self):
         while True:
@@ -363,6 +406,15 @@ class ZoneMinderInterface(object):
             except Empty:
                 pass
 
-            self.check_for_alarms()
+            self.expire_old_alarms()
+
+            alarmed_monitors = self.check_monitors(status_filter=self.ALARM_ACTIVE)
+
+            # TODO: Handle when a monitor is no longer alarmed but not ack'd
+            for monitor_id in alarmed_monitors:
+                if monitor_id in self.alarms:
+                    self.update_alarm(monitor_id)
+                else:
+                    self.new_alarm(monitor_id)
 
             time.sleep(1)

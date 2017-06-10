@@ -11,6 +11,8 @@ security_interface:
     url: <protocol>://<ip_address>:<port>/zm
     username: <username>
     password: <password>
+    alarm_alert_interval: 1m
+    alarm_expires_at: 5m
 
 users:
     - 'slack:<slack_user_id>:<common_name>'
