@@ -1,10 +1,10 @@
-from slackclient._server import SlackConnectionError, SlackLoginError
-from slackclient import SlackClient
 from queue import Empty
+from slackclient import SlackClient
+from slackclient._server import SlackConnectionError, SlackLoginError
 
-import random
-import time
 import re
+import time
+import random
 
 
 class SlackInterface(object):
@@ -45,17 +45,19 @@ class SlackInterface(object):
 
         self.available_commands_help += "```\n\n"
 
-    def get_bot_id(self, bot_name):
+    def get_user_id(self, user_name):
+        """ Attempt to find the user whos name matches, returning the users Slack ID """
         api_call = self.slack_client.api_call("users.list")
 
         if api_call.get("ok", False):
             for user in api_call.get("members"):
-                if user.get("name") == bot_name:
+                if user.get("name") == user_name:
                     return user.get("id")
 
         return None
 
     def get_channel_id(self, channel_name):
+        """ Attempt to find the channel whos name matches, returning the channels Slack ID """
         api_call = self.slack_client.api_call("channels.list", exclude_archived=1)
 
         if api_call.get("ok", False):
@@ -66,7 +68,7 @@ class SlackInterface(object):
         return None
 
     def is_ready(self):
-        # Ensure we're connected to the slack feed
+        """ Ready up by creating the SlackClient instance and connecting to the firehose """
         try:
             self.slack_client = SlackClient(self.config["bot_user_token"])
             if not self.slack_client.rtm_connect():
@@ -81,7 +83,7 @@ class SlackInterface(object):
 
         # Get our bot's ID
         if not self.bot_id:
-            self.bot_id = self.get_bot_id(self.config["bot_name"].lower())
+            self.bot_id = self.get_user_id(self.config["bot_name"].lower())
 
             if self.bot_id is None:
                 self.logger.error("Failed to obtain the ID of the bot '{0}'".format(self.config["bot_name"]))
@@ -101,7 +103,7 @@ class SlackInterface(object):
         # And we're done here
         self.ready = True
 
-        return True
+        return self.ready
 
     def match_event(self, event):
         """
@@ -259,3 +261,4 @@ class SlackInterface(object):
 
             # Just so we're not smashing the slack feed
             time.sleep(1)
+
