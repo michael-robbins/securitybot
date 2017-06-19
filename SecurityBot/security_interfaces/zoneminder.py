@@ -1,11 +1,11 @@
+from queue import Empty
 from collections import defaultdict
 from datetime import datetime, timedelta
-from queue import Empty
 
-import itertools
-import requests
-import time
 import re
+import time
+import requests
+import itertools
 
 
 class ZoneMinderInterface(object):

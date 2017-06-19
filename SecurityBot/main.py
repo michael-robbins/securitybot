@@ -8,8 +8,8 @@ import logging
 import argparse
 import threading
 
-from pydoc import locate
 from queue import Queue
+from pydoc import locate
 
 from SecurityBot import human_interfaces
 from SecurityBot import security_interfaces
@@ -17,7 +17,7 @@ from SecurityBot import security_interfaces
 
 def interface_loader(module_directory):
     """
-    Takes a directory that contains interface modules, we will then load every available module and return them
+    Takes a directory that contains interface modules, we will then load every available module within
     :param module_directory: 
     :return: 
     """
@@ -44,17 +44,29 @@ def interface_loader(module_directory):
 
     return interfaces
 
+def parse_config(config_file):
+    config = yaml.load(config_file)
+
+    # Perform any validation we want to here
+
+    return config
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     parser.add_argument("-v", action="count", default=0, help="Determines logging verbosity")
+    parser.add_argument("--log-file", help="Path to log file")
     parser.add_argument("--config", required=True, help="Path to the SecurityBot config file")
 
     args = parser.parse_args()
 
     logger = logging.getLogger("SecurityBot")
-    handler = logging.StreamHandler(sys.stdout)
+
+    if args.log_file:
+        handler = logging.handlers.RotatingFileHandler(args.log_file, maxBytes=1024 * 1024 * 10, backupCount=10)
+    else:
+        handler = logging.StreamHandler(sys.stdout)
 
     if args.v > 0:
         log_level = logging.DEBUG
@@ -64,7 +76,7 @@ if __name__ == "__main__":
     logger.setLevel(log_level)
     handler.setLevel(log_level)
 
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
     handler.setFormatter(formatter)
 
     logger.addHandler(handler)
@@ -72,9 +84,10 @@ if __name__ == "__main__":
     if not os.path.exists(args.config):
         parser.error("Provided config file doesn't exist")
 
-    with open(args.config, 'rt') as config_file:
-        config = yaml.load(config_file)
-        logger.debug("Loaded Config: {0}".format(config))
+    with open(args.config, "rt") as config_file:
+        config = parse_config(config_file)
+
+    logger.debug("Loaded Config: {0}".format(config))
 
     # Load the interface classes
     security_interfaces = interface_loader(os.path.dirname(security_interfaces.__file__))
@@ -83,7 +96,7 @@ if __name__ == "__main__":
     human_interfaces = interface_loader(os.path.dirname(human_interfaces.__file__))
     logger.debug("Loaded Human Interfaces: {0}".format(", ".join(human_interfaces.keys())))
 
-    # Choose the one specific to this config
+    # Choose the one specific to the config
     SecurityInterfaceClass = security_interfaces.get(config["security_interface"]["name"])
     security_interface_queue = Queue()
 
@@ -114,11 +127,13 @@ if __name__ == "__main__":
         logger.error("{0} interface failed to ready up".format(security_interface.name.title()))
         sys.exit(1)
 
+    # Start the threads
     human_interface_thread = threading.Thread(target=human_interface.monitor)
     human_interface_thread.start()
 
     security_interface_thread = threading.Thread(target=security_interface.monitor)
     security_interface_thread.start()
 
+    # Wait for the security and human threads to kill themselves off
     human_interface_thread.join()
     security_interface_thread.join()
