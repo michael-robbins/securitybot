@@ -91,11 +91,14 @@ if __name__ == "__main__":
     human_interface_queue = Queue()
 
     # Initialize the classes
+    assert isinstance(SecurityInterfaceClass, type)
     security_interface = SecurityInterfaceClass(config["security_interface"],
                                                 config["permissions"],
                                                 config["locations"],
                                                 (human_interface_queue, security_interface_queue),
                                                 logger)
+
+    assert isinstance(HumanInterfaceClass, type)
     human_interface = HumanInterfaceClass(config["human_interface"],
                                           config["users"],
                                           (security_interface_queue, human_interface_queue),

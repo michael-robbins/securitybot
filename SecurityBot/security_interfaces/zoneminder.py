@@ -29,7 +29,7 @@ class ZoneMinderInterface(object):
             self.config["url"] = self.config["url"][0:-1]
 
         # Check each delta setting and parse it
-        time_regex = re.compile(r"^([0-9]+)(hms)$")
+        time_regex = re.compile(r"^([0-9]+)([hms])$")
 
         delta_dict = {
             's': lambda x: timedelta(seconds=x),
@@ -43,18 +43,25 @@ class ZoneMinderInterface(object):
         }
 
         for setting_name in ["alarm_alert_interval", "alarm_expires_at"]:
+            use_default = False
+
             if self.config[setting_name]:
                 match = time_regex.match(self.config[setting_name])
 
                 if match:
-                    alert_interval, alert_time = match.group()
-                    self.config[setting_name] = delta_dict[alert_interval](int(alert_time))
+                    alert_interval, alert_delta = match.group()
+                    self.config[setting_name] = delta_dict[alert_delta](int(alert_interval))
                 else:
-                    self.logger.error("Invalid '{0}' value, skipping this setting".format(setting_name))
+                    use_default = True
+                    self.logger.error("Invalid '{0}' value".format(setting_name))
             else:
+                use_default = True
                 self.config[setting_name] = delta_defaults[setting_name]
-                self.logger.warn("'{0}' is missing from config, loading default: {1}".format(setting_name,
-                                                                                             self.config[setting_name]))
+                self.logger.warn("'{0}' is missing from config".format(setting_name, self.config[setting_name]))
+
+            if use_default:
+                self.config[setting_name] = delta_defaults[setting_name]
+                self.logger.warn("Loading default: {1}".format(setting_name, self.config[setting_name]))
 
         # Parse and load all the permissions
         for permission in permissions:
@@ -118,7 +125,12 @@ class ZoneMinderInterface(object):
                 "function": self.list_locations,
                 "num_args": range(0),
                 "help": "Shows all the loaded locations for ZoneMinder",
-            }
+            },
+            "help": {
+                "function": self.list_commands,
+                "num_args": range(0),
+                "help": "Shows the available commands"
+            },
         }
 
         self.session = None
@@ -303,18 +315,28 @@ class ZoneMinderInterface(object):
 
         monitor_id = self.locations[location]
 
-        status = self.status_of_monitor(monitor_id, location)
+        if monitor_id in self.alarms:
+            alarm = self.alarms[monitor_id]
 
-        if status == self.ALARM_INACTIVE:
-            return "{0} is fine!".format(location.title())
-        elif status == self.ALARM_ACTIVE:
-            return "{0} totes under attack!".format(location.title())
+            if alarm["finished"]:
+                verb = "no longer"
+            else:
+                verb = "currently"
+
+            response = "{0} is {1} under attack!\n\nHere are the details:\n```".format(location.title(), verb)
+            response += "Alarm Raised:   {0}\n".format(alarm["started"].strftime("%Y-%m-%d %H:%M:%S"))
+            response += "Alarm Updated:  {0}\n".format(alarm["updated"].strftime("%Y-%m-%d %H:%M:%S"))
+            response += "Alarm Finished: {0}\n".format(alarm["finished"])
+            response += "Ack'd? {0}```".format("Yes" if alarm["ack"] else "No")
+
+            return response
         else:
-            return "{0} is returning an unknown status of {1}!".format(location.title(), status)
+            return "{0} is fine!".format(location.title())
 
     def list_permissions(self, *_):
         pretty_list = "These are the permissions I've loaded:\n```"
         pretty_list += "{0:<15}{1:<10}{2:<10}\n".format("User", "Command", "Option")
+
         for common_id, permissions in self.permissions.items():
             for command, option in permissions:
                 pretty_list += "{0:<15}{1:<10}{2:<10}\n".format(common_id, command, option)
@@ -325,8 +347,19 @@ class ZoneMinderInterface(object):
     def list_locations(self, *_):
         pretty_list = "These are the locations I've loaded:\n```"
         pretty_list += "{0:<20}{1:<10}\n".format("Location", "Monitor ID")
+
         for location, monitor_id in self.locations.items():
             pretty_list += "{0:<20}{1:<10}\n".format(location, monitor_id)
+
+        pretty_list += "```"
+        return pretty_list
+
+    def list_commands(self, *_):
+        pretty_list = "These are the commands I support:\n```"
+        pretty_list += "{0:<15}{1:<10}\n".format("Command", "Help")
+
+        for command, args in self.commands.items():
+            pretty_list += "{0:<15}{1:<10}\n".format(command, args["help"])
 
         pretty_list += "```"
         return pretty_list
@@ -364,11 +397,21 @@ class ZoneMinderInterface(object):
 
         if datetime.utcnow() > alert_at:
             self.write_queue.put({
-                "text": "btw, {0} is still under attack!".format(self.monitors[monitor_id]),
+                "text": "btw, {0} is still under attack!".format(self.monitors[monitor_id].title()),
                 "options": {
                     "channel": None
                 }
             })
+
+    def finish_alarm(self, monitor_id):
+        self.alarms[monitor_id]["finished"] = True
+
+        self.write_queue.put({
+            "text": "{0} is no longer under attack!".format(self.monitors[monitor_id].title()),
+            "options": {
+                "channel": None
+            }
+        })
 
     def new_alarm(self, monitor_id):
         self.alarms[monitor_id] = {
@@ -387,6 +430,8 @@ class ZoneMinderInterface(object):
         })
 
     def monitor(self):
+        self.logger.info("ZoneMinder is connected and looking for alarms")
+
         while True:
             # Check ZoneMinder for any new alerts
             # Parse the alert and extract a picture/frame
@@ -410,11 +455,15 @@ class ZoneMinderInterface(object):
 
             alarmed_monitors = self.check_monitors(status_filter=self.ALARM_ACTIVE)
 
-            # TODO: Handle when a monitor is no longer alarmed but not ack'd
             for monitor_id in alarmed_monitors:
                 if monitor_id in self.alarms:
                     self.update_alarm(monitor_id)
                 else:
                     self.new_alarm(monitor_id)
+
+            # Finish alarms that are no longer in alarmed_monitors
+            for monitor_id in set(self.alarms.keys()).difference(alarmed_monitors):
+                if not self.alarms[monitor_id]["finished"]:
+                    self.finish_alarm(monitor_id)
 
             time.sleep(1)
