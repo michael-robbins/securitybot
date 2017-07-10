@@ -383,8 +383,14 @@ class ZoneMinderInterface(object):
             alarm_expires_at = alarm_details["finished"] + self.config["alarm_expires_at"]
 
             if datetime.utcnow() > alarm_expires_at:
+                self.write_queue.put({
+                    "text": "{0}'s alarm has expired".format(self.monitors[monitor_id].title()),
+                    "options": {
+                        "channel": None
+                    }
+                })
+
                 del self.alarms[monitor_id]
-                # TODO: Alert the user the ack'd alarm has expired
 
     def update_alarm(self, monitor_id):
         alarm_details = self.alarms[monitor_id]
