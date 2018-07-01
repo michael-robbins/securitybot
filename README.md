@@ -1,5 +1,7 @@
 # SecurityBot
 
+SecurityBot provides a bridge between human interfaces (eg. Slack) and security interfaces (eg. ZoneMinder).
+
 Outstanding Features
 * Allow the security interface to listen to ZM and post messages to slack proactively
 * When under alarm, post a picture/still of the alarm event
