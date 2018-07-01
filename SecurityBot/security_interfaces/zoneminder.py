@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 from queue import Empty
 from collections import defaultdict
 from datetime import datetime, timedelta
@@ -6,13 +8,16 @@ import re
 import os
 import time
 import json
+import glob
 import signal
 import requests
 import argparse
 import itertools
+import subprocess
 
 DEFAULT_SIGNAL=signal.SIGUSR1
 DEFAULT_PID_FILE="/tmp/securitybot.pid"
+DEFAULT_EVENT_FOLDER="/tmp/zm_events"
 
 class ZoneMinderInterface(object):
     name = "zoneminder"
@@ -497,23 +502,46 @@ class ZoneMinderInterface(object):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--pid-file", help="PID file we will send the signal to")
-    parser.add_argument("--event-folder", help="Folder we write out the event to")
+    parser.add_argument("alarm_folder", help="Path to alarm")
+    parser.add_argument("--pid-file", default=DEFAULT_PID_FILE, help="PID file we will send the signal to")
+    parser.add_argument("--event-folder", default=DEFAULT_EVENT_FOLDER, help="Folder we write out the event to")
     args = parser.parse_args()
+
+    if not os.path.exists(args.pid_file):
+        parser.error("PID file '{0}' doesn't exist?".format(args.pid_file))
+
+    with open(args.pid_file, "rt") as pid_file:
+        pid = int(pid_file.read())
+
+    if not os.path.exists(args.event_folder):
+        os.makedirs(args.event_folder, exist_ok=True)
 
     def trigger_signal(pid, sig=DEFAULT_SIGNAL):
         subprocess.run(["kill", "-{0}".format(sig.name), str(pid)])
 
     event = {}
 
-    # Obtain all the required info
+    # Extract the attrs from the event folder (datetime and monitor id)
+    digit_parts = ["yy", "mm", "dd", "HH", "MM", "SS"]
+    digit_regexes = ["(?P<{0}>[0-9]{{2}})".format(i) for i in digit_parts]
+    match = re.match(".*(?P<monitor_id>[0-9]+)/{0}".format('/'.join(digit_regexes)), args.alarm_folder)
+
+    if not hasattr(match, "groupdict"):
+        raise RuntimeError("Unable to extract parts from provided folder arg")
+
+    event.update(match.groupdict())
+
+    # Discover the event id
+    event_ids = glob.glob(args.alarm_folder + "/.*")
+
+    if len(event_ids) == 1:
+        event["event_id"] = event_ids[0].split("/")[-1].lstrip(".")
+    else:
+        raise RuntimeError("Unable to extract event id from filesystem")
 
     # Write it out to disk
     debug_filename = os.path.join(args.event_folder, "debug.log")
-    with open(args.debug_filename, "at") as debug_file:
-        debug_file.write("pwd: {0}\n".format(os.getcwd()))
-
-    with open(args.pid_file, "rt") as pid_file:
-        pid = pid_file.read()
+    with open(debug_filename, "at") as debug_file:
+        debug_file.write(json.dumps(event) + "\n")
 
     trigger_signal(pid)
