@@ -3,10 +3,16 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 
 import re
+import os
 import time
+import json
+import signal
 import requests
+import argparse
 import itertools
 
+DEFAULT_SIGNAL=signal.SIGUSR1
+DEFAULT_PID_FILE="/tmp/securitybot.pid"
 
 class ZoneMinderInterface(object):
     name = "zoneminder"
@@ -473,3 +479,41 @@ class ZoneMinderInterface(object):
                     self.finish_alarm(monitor_id)
 
             time.sleep(1)
+
+    def write_pid(self, path=DEFAULT_PID_FILE):
+        if os.path.exists(path):
+            os.remove(path)
+
+        with open(path, "wt") as pid_file:
+            pid_file.write(os.getpid())
+
+    def handle_new_alarm(self):
+        print("I have a new alarm!")
+        pass
+
+    def listen_for_signal(self, sig=DEFAULT_SIGNAL):
+        signal.signal(sig, handle_new_alarm)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--pid-file", help="PID file we will send the signal to")
+    parser.add_argument("--event-folder", help="Folder we write out the event to")
+    args = parser.parse_args()
+
+    def trigger_signal(pid, sig=DEFAULT_SIGNAL):
+        subprocess.run(["kill", "-{0}".format(sig.name), str(pid)])
+
+    event = {}
+
+    # Obtain all the required info
+
+    # Write it out to disk
+    debug_filename = os.path.join(args.event_folder, "debug.log")
+    with open(args.debug_filename, "at") as debug_file:
+        debug_file.write("pwd: {0}\n".format(os.getcwd()))
+
+    with open(args.pid_file, "rt") as pid_file:
+        pid = pid_file.read()
+
+    trigger_signal(pid)
