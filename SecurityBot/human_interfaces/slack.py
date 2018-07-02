@@ -1,6 +1,6 @@
 from queue import Empty
 from slackclient import SlackClient
-from slackclient._server import SlackConnectionError, SlackLoginError
+from slackclient.server import SlackConnectionError, SlackLoginError
 
 import re
 import time
