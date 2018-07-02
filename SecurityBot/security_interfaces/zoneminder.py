@@ -492,11 +492,29 @@ class ZoneMinderInterface(object):
         with open(path, "wt") as pid_file:
             pid_file.write(os.getpid())
 
-    def handle_new_alarm(self):
-        print("I have a new alarm!")
-        pass
+    def handle_new_alarm(self, event_folder=DEFAULT_EVENT_FOLDER):
+        self.logger.info("Received signal that a new zoneminder event is available")
+
+        # Read in each event file, we loop as there may be more than one
+        for event_filename in glob.glob(os.path.join(event_folder, "event-*.json")):
+            self.logger.info("Found: {0}".format(event_filename))
+
+            with open(event_filename, "rt") as event_file:
+                event = json.loads(event_file)
+
+                self.logger.info("Got event: {0}".format(event))
+                self.write_queue.put({
+                    "text": "{0}".format(event),
+                    "options": {
+                        "channel": None
+                    },
+                })
+
+            self.logger.info("Deleting {0}".format(event_filename))
+            os.remove(event_filename)
 
     def listen_for_signal(self, sig=DEFAULT_SIGNAL):
+        # This will only fire in the main thread, so we're threadsafe on this firing
         signal.signal(sig, handle_new_alarm)
 
 
@@ -534,14 +552,16 @@ if __name__ == "__main__":
     # Discover the event id
     event_ids = glob.glob(args.alarm_folder + "/.*")
 
-    if len(event_ids) == 1:
-        event["event_id"] = event_ids[0].split("/")[-1].lstrip(".")
-    else:
+    if len(event_ids) != 1:
         raise RuntimeError("Unable to extract event id from filesystem")
 
+    event_id = event_ids[0].split("/")[-1].lstrip(".")
+    event["event_id"] = event_id
+
     # Write it out to disk
-    debug_filename = os.path.join(args.event_folder, "debug.log")
-    with open(debug_filename, "at") as debug_file:
+    event_filename = os.path.join(args.event_folder, "event-{0}.json".format(event_id))
+
+    with open(event_filename, "at") as event_file:
         debug_file.write(json.dumps(event) + "\n")
 
     trigger_signal(pid)
