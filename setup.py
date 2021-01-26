@@ -19,7 +19,7 @@ setup(
     license="GNU",
     packages=find_packages(),
     install_requires=[
-        "pyyaml>=3,<4",
+        "pyyaml>=3,<6",
         "slackclient>=1.1,<2",
     ],
     python_requires="~=3.5",
