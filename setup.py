@@ -20,7 +20,7 @@ setup(
     packages=find_packages(),
     install_requires=[
         "pyyaml>=3,<6",
-        "slackclient>=1.1,<2",
+        "slackclient>=1.1,<3",
     ],
     python_requires="~=3.5",
     extras_require={
