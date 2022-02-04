@@ -24,6 +24,6 @@ setup(
     ],
     python_requires="~=3.5",
     extras_require={
-        "test": ["pytest>=3.3,<7"],
+        "test": ["pytest>=3.3,<8"],
     }
 )
